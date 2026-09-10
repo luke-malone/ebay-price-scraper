@@ -1,22 +1,56 @@
-from urllib.parse import quote_plus
+
+from urllib.parse import quote_plus, urlparse
 
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
 
 
-def scrape_ebay(search_term: str, max_results: int = 10) -> list[dict]:
+def get_item_id(url: str) -> str | None:
+    """Extract the eBay item ID from a listing URL."""
+
+    try:
+        parts = urlparse(url).path.strip("/").split("/")
+
+        if "itm" not in parts:
+            return None
+
+        index = parts.index("itm")
+
+        if len(parts) <= index + 1:
+            return None
+
+        item_id = parts[index + 1]
+
+        if item_id.isdigit():
+            return item_id
+
+    except Exception:
+        pass
+
+    return None
+
+
+def scrape_ebay(
+    search_term: str,
+    max_results: int = 100,
+    seen_item_ids: set[str] | None = None,
+) -> list[dict]:
     """
-    Scrape eBay UK search results.
+    Scrape eBay UK newest listings.
 
-    Args:
-        search_term: Product/search term to look for.
-        max_results: Maximum number of listings to return.
-
-    Returns:
-        A list of dictionaries containing title, price and URL.
+    The scraper:
+    - sorts by newly listed (_sop=10)
+    - follows pagination
+    - deduplicates within the run
+    - skips IDs already seen in previous runs
+    - keeps paging until max_results NEW listings are found
     """
 
     results = []
+    seen_this_run = set()
+
+    if seen_item_ids is None:
+        seen_item_ids = set()
 
     with sync_playwright() as p:
         print("Launching browser...")
@@ -31,116 +65,207 @@ def scrape_ebay(search_term: str, max_results: int = 10) -> list[dict]:
             timezone_id="Europe/London",
         )
 
-        search_url = (
-            "https://www.ebay.co.uk/sch/i.html"
-            f"?_nkw={quote_plus(search_term)}"
-        )
-
-        print(f"Opening: {search_url}")
+        page_number = 1
 
         try:
-            response = page.goto(
-                search_url,
-                wait_until="domcontentloaded",
-                timeout=30_000,
-            )
+            while len(results) < max_results:
 
-            if response:
-                print(f"HTTP status: {response.status}")
-
-            print(f"Page title: {page.title()}")
-
-            # Wait until the new eBay result cards appear.
-            try:
-                page.wait_for_selector(
-                    "ul.srp-results > li",
-                    timeout=15_000,
+                search_url = (
+                    "https://www.ebay.co.uk/sch/i.html"
+                    f"?_nkw={quote_plus(search_term)}"
+                    "&_sacat=0"
+                    "&_from=R40"
+                    "&_sop=10"
+                    f"&_pgn={page_number}"
                 )
-            except PlaywrightTimeoutError:
-                print("Timed out waiting for search results.")
-                return results
 
-            # Allow any remaining JavaScript rendering to finish.
-            page.wait_for_timeout(2000)
+                print()
+                print(f"Opening page {page_number}:")
+                print(search_url)
 
-            items = page.locator("ul.srp-results > li")
-            item_count = items.count()
+                response = page.goto(
+                    search_url,
+                    wait_until="domcontentloaded",
+                    timeout=30_000,
+                )
 
-            print(f"Found {item_count} candidate results")
+                if response:
+                    print(f"HTTP status: {response.status}")
 
-            for i in range(min(item_count, max_results)):
-                item = items.nth(i)
+                print(f"Page title: {page.title()}")
 
                 try:
-                    # The current eBay result cards use s-card__ classes.
-                    title_locator = item.locator(
-                        "a[href*='/itm/'] img.s-card__image"
+                    page.wait_for_selector(
+                        "ul.srp-results > li",
+                        timeout=15_000,
                     )
+                except PlaywrightTimeoutError:
+                    print(
+                        f"Timed out waiting for results "
+                        f"on page {page_number}."
+                    )
+                    break
 
-                    if title_locator.count() == 0:
-                        # Fallback: find the listing link itself.
-                        title_locator = item.locator(
-                            "a.s-card__link[href*='/itm/']"
+                page.wait_for_timeout(2000)
+
+                items = page.locator(
+                    "ul.srp-results > li"
+                )
+
+                item_count = items.count()
+
+                print(
+                    f"Found {item_count} candidate results "
+                    f"on page {page_number}"
+                )
+
+                page_added = 0
+
+                for i in range(item_count):
+
+                    if len(results) >= max_results:
+                        break
+
+                    item = items.nth(i)
+
+                    try:
+                        # --------------------------------------------
+                        # URL
+                        # --------------------------------------------
+
+                        link_locator = item.locator(
+                            "a[href*='/itm/']"
                         )
 
-                    if title_locator.count() == 0:
-                        continue
+                        if link_locator.count() == 0:
+                            continue
 
-                    # eBay places the full product title in image alt text.
-                    image = title_locator.first
+                        url = (
+                            link_locator.first
+                            .get_attribute("href")
+                        )
 
-                    if awaitable := None:
-                        pass
+                        if not url:
+                            continue
 
-                    title = image.get_attribute("alt")
+                        # --------------------------------------------
+                        # Item ID
+                        # --------------------------------------------
 
-                    if title:
-                        # Remove the trailing image-description text.
-                        title = title.split(" Image ")[0].strip()
+                        item_id = get_item_id(url)
 
-                    # Find the price.
-                    price_locator = item.locator(
-                        "span.s-card__price"
-                    )
+                        if not item_id:
+                            continue
 
-                    if price_locator.count() == 0:
+                        # Already found on this run.
+                        if item_id in seen_this_run:
+                            continue
+
+                        # Already processed by an earlier run.
+                        if item_id in seen_item_ids:
+                            continue
+
+                        # --------------------------------------------
+                        # Title
+                        # --------------------------------------------
+
+                        title = None
+
+                        image_locator = item.locator(
+                            "a[href*='/itm/'] img.s-card__image"
+                        )
+
+                        if image_locator.count() > 0:
+                            title = (
+                                image_locator.first
+                                .get_attribute("alt")
+                            )
+
+                        if not title:
+                            title_locator = item.locator(
+                                "a.s-card__link[href*='/itm/']"
+                            )
+
+                            if title_locator.count() > 0:
+                                title = (
+                                    title_locator.first
+                                    .inner_text()
+                                    .strip()
+                                )
+
+                        if title:
+                            title = (
+                                title
+                                .split(" Image ")[0]
+                                .strip()
+                            )
+
+                        if not title:
+                            continue
+
+                        # --------------------------------------------
+                        # Price
+                        # --------------------------------------------
+
                         price_locator = item.locator(
-                            "[class*='price']"
+                            "span.s-card__price"
                         )
 
-                    price = (
-                        price_locator.first.inner_text().strip()
-                        if price_locator.count() > 0
-                        else None
+                        if price_locator.count() == 0:
+                            price_locator = item.locator(
+                                "[class*='price']"
+                            )
+
+                        price = (
+                            price_locator.first
+                            .inner_text()
+                            .strip()
+                            if price_locator.count() > 0
+                            else None
+                        )
+
+                        # --------------------------------------------
+                        # Add NEW listing
+                        # --------------------------------------------
+
+                        results.append(
+                            {
+                                "item_id": item_id,
+                                "title": title,
+                                "price": price,
+                                "url": url,
+                            }
+                        )
+
+                        seen_this_run.add(item_id)
+                        page_added += 1
+
+                    except Exception as error:
+                        print(
+                            f"Skipping result {i} on page "
+                            f"{page_number}: {error}"
+                        )
+
+                print(
+                    f"Added {page_added} NEW listings "
+                    f"from page {page_number}."
+                )
+
+                print(
+                    f"New listings collected: "
+                    f"{len(results)}/{max_results}"
+                )
+
+                # If an entire page contains nothing new, continuing
+                # indefinitely is not useful.
+                if page_added == 0:
+                    print(
+                        "No new listings found on this page. "
+                        "Stopping pagination."
                     )
+                    break
 
-                    # Find the actual listing URL.
-                    link_locator = item.locator(
-                        "a[href*='/itm/']"
-                    )
-
-                    url = (
-                        link_locator.first.get_attribute("href")
-                        if link_locator.count() > 0
-                        else None
-                    )
-
-                    # Ignore anything that isn't an actual listing.
-                    if not title or not url:
-                        continue
-
-                    results.append(
-                        {
-                            "title": title,
-                            "price": price,
-                            "url": url,
-                        }
-                    )
-
-                except Exception as error:
-                    print(f"Skipping result {i}: {error}")
-
-            print(f"Successfully extracted {len(results)} listings.")
+                page_number += 1
 
         except PlaywrightTimeoutError:
             print("Timed out loading eBay.")
@@ -151,4 +276,11 @@ def scrape_ebay(search_term: str, max_results: int = 10) -> list[dict]:
         finally:
             browser.close()
 
+    print()
+    print(
+        f"Finished scraping. Returning "
+        f"{len(results)} NEW listings."
+    )
+
     return results
+
