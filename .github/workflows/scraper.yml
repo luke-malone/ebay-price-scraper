@@ -48,8 +48,15 @@ jobs:
       - name: Run scraper
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          HEADLESS: "true"
         run: |
-          xvfb-run -a python main.py
+          python main.py
+
+      - name: Verify scraper outputs
+        run: |
+          for file in output/classified.json output/python_handled.json output/gpt_handled.json output/price_eligible.json output/price_ineligible.json; do
+            test -s "$file" || { echo "Required scraper output is missing or empty: $file"; exit 1; }
+          done
 
       - name: Upload dataset to Cloud Storage
         run: |

@@ -52,8 +52,7 @@ else:
 
 
 if not results:
-    print("No results found.")
-    raise SystemExit
+    raise RuntimeError("No results found; refusing to create or upload an empty dataset.")
 
 
 # ============================================================
