@@ -1,6 +1,6 @@
 import unittest
 
-from src.scraper import build_search_url
+from src.scraper import build_search_url, normal_chromium_user_agent
 
 
 class SearchUrlTests(unittest.TestCase):
@@ -11,6 +11,9 @@ class SearchUrlTests(unittest.TestCase):
             "https://www.ebay.co.uk/sch/i.html?_nkw=iPhone+15+Pro&_sacat=0"
             "&_from=R40&_sop=10&_pgn=3",
         )
+
+    def test_user_agent_uses_actual_browser_version(self) -> None:
+        self.assertIn("Chrome/123.4.5.6", normal_chromium_user_agent("123.4.5.6"))
 
 
 if __name__ == "__main__":

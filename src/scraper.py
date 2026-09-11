@@ -6,12 +6,6 @@ from playwright.sync_api import sync_playwright
 
 
 EBAY_SEARCH_URL = "https://www.ebay.co.uk/sch/i.html"
-NORMAL_CHROMIUM_USER_AGENT = (
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
-)
-
-
 class EbayScrapeError(RuntimeError):
     """Raised when eBay does not provide a usable search-results page."""
 
@@ -21,6 +15,14 @@ def build_search_url(search_term: str, page_number: int) -> str:
     return (
         f"{EBAY_SEARCH_URL}?_nkw={quote_plus(search_term)}&_sacat=0"
         f"&_from=R40&_sop=10&_pgn={page_number}"
+    )
+
+
+def normal_chromium_user_agent(chromium_version: str) -> str:
+    """Return a conventional Linux Chromium User-Agent matching the browser."""
+    return (
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+        f"(KHTML, like Gecko) Chrome/{chromium_version} Safari/537.36"
     )
 
 
@@ -66,17 +68,18 @@ def scrape_ebay(search_term: str, max_results: int = 100) -> list[dict]:
         browser = p.chromium.launch(
             headless=os.getenv("HEADLESS", "false").casefold() == "true"
         )
+        user_agent = normal_chromium_user_agent(browser.version)
 
         context = browser.new_context(
             viewport={"width": 1440, "height": 1000},
             locale="en-GB",
             timezone_id="Europe/London",
-            user_agent=NORMAL_CHROMIUM_USER_AGENT,
+            user_agent=user_agent,
             extra_http_headers={"Accept-Language": "en-GB,en;q=0.9"},
         )
         page = context.new_page()
         page.set_default_timeout(15_000)
-        print(f"Browser user agent: {NORMAL_CHROMIUM_USER_AGENT}")
+        print(f"Browser user agent: {user_agent}")
 
         page_number = 1
 
