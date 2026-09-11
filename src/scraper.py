@@ -1,4 +1,3 @@
-
 from urllib.parse import quote_plus, urlparse
 
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
@@ -9,20 +8,16 @@ def get_item_id(url: str) -> str | None:
     """Extract the eBay item ID from a listing URL."""
 
     try:
-        parts = urlparse(url).path.strip("/").split("/")
+        path_parts = urlparse(url).path.strip("/").split("/")
 
-        if "itm" not in parts:
-            return None
+        if "itm" in path_parts:
+            itm_index = path_parts.index("itm")
 
-        index = parts.index("itm")
+            if len(path_parts) > itm_index + 1:
+                item_id = path_parts[itm_index + 1]
 
-        if len(parts) <= index + 1:
-            return None
-
-        item_id = parts[index + 1]
-
-        if item_id.isdigit():
-            return item_id
+                if item_id.isdigit():
+                    return item_id
 
     except Exception:
         pass
@@ -30,27 +25,20 @@ def get_item_id(url: str) -> str | None:
     return None
 
 
-def scrape_ebay(
-    search_term: str,
-    max_results: int = 100,
-    seen_item_ids: set[str] | None = None,
-) -> list[dict]:
+def scrape_ebay(search_term: str, max_results: int = 100) -> list[dict]:
     """
-    Scrape eBay UK newest listings.
+    Scrape eBay UK search results, newest listings first.
 
     The scraper:
-    - sorts by newly listed (_sop=10)
+    - sorts by newly listed
     - follows pagination
-    - deduplicates within the run
-    - skips IDs already seen in previous runs
-    - keeps paging until max_results NEW listings are found
+    - extracts eBay item IDs
+    - removes duplicate listings
+    - stops after max_results unique listings
     """
 
     results = []
-    seen_this_run = set()
-
-    if seen_item_ids is None:
-        seen_item_ids = set()
+    seen_ids = set()
 
     with sync_playwright() as p:
         print("Launching browser...")
@@ -108,10 +96,7 @@ def scrape_ebay(
 
                 page.wait_for_timeout(2000)
 
-                items = page.locator(
-                    "ul.srp-results > li"
-                )
-
+                items = page.locator("ul.srp-results > li")
                 item_count = items.count()
 
                 print(
@@ -129,9 +114,9 @@ def scrape_ebay(
                     item = items.nth(i)
 
                     try:
-                        # --------------------------------------------
-                        # URL
-                        # --------------------------------------------
+                        # ------------------------------------------------
+                        # Find listing URL
+                        # ------------------------------------------------
 
                         link_locator = item.locator(
                             "a[href*='/itm/']"
@@ -140,34 +125,27 @@ def scrape_ebay(
                         if link_locator.count() == 0:
                             continue
 
-                        url = (
-                            link_locator.first
-                            .get_attribute("href")
-                        )
+                        url = link_locator.first.get_attribute("href")
 
                         if not url:
                             continue
 
-                        # --------------------------------------------
-                        # Item ID
-                        # --------------------------------------------
+                        # ------------------------------------------------
+                        # Extract eBay item ID
+                        # ------------------------------------------------
 
                         item_id = get_item_id(url)
 
                         if not item_id:
                             continue
 
-                        # Already found on this run.
-                        if item_id in seen_this_run:
+                        # Skip duplicates.
+                        if item_id in seen_ids:
                             continue
 
-                        # Already processed by an earlier run.
-                        if item_id in seen_item_ids:
-                            continue
-
-                        # --------------------------------------------
-                        # Title
-                        # --------------------------------------------
+                        # ------------------------------------------------
+                        # Find title
+                        # ------------------------------------------------
 
                         title = None
 
@@ -181,6 +159,7 @@ def scrape_ebay(
                                 .get_attribute("alt")
                             )
 
+                        # Fallback to link text.
                         if not title:
                             title_locator = item.locator(
                                 "a.s-card__link[href*='/itm/']"
@@ -194,18 +173,14 @@ def scrape_ebay(
                                 )
 
                         if title:
-                            title = (
-                                title
-                                .split(" Image ")[0]
-                                .strip()
-                            )
+                            title = title.split(" Image ")[0].strip()
 
                         if not title:
                             continue
 
-                        # --------------------------------------------
-                        # Price
-                        # --------------------------------------------
+                        # ------------------------------------------------
+                        # Find price
+                        # ------------------------------------------------
 
                         price_locator = item.locator(
                             "span.s-card__price"
@@ -217,16 +192,14 @@ def scrape_ebay(
                             )
 
                         price = (
-                            price_locator.first
-                            .inner_text()
-                            .strip()
+                            price_locator.first.inner_text().strip()
                             if price_locator.count() > 0
                             else None
                         )
 
-                        # --------------------------------------------
-                        # Add NEW listing
-                        # --------------------------------------------
+                        # ------------------------------------------------
+                        # Save listing
+                        # ------------------------------------------------
 
                         results.append(
                             {
@@ -237,7 +210,7 @@ def scrape_ebay(
                             }
                         )
 
-                        seen_this_run.add(item_id)
+                        seen_ids.add(item_id)
                         page_added += 1
 
                     except Exception as error:
@@ -247,20 +220,20 @@ def scrape_ebay(
                         )
 
                 print(
-                    f"Added {page_added} NEW listings "
+                    f"Added {page_added} new listings "
                     f"from page {page_number}."
                 )
 
                 print(
-                    f"New listings collected: "
+                    f"Total unique listings: "
                     f"{len(results)}/{max_results}"
                 )
 
-                # If an entire page contains nothing new, continuing
-                # indefinitely is not useful.
+                # Prevent infinite pagination if eBay keeps returning
+                # pages containing only listings we have already seen.
                 if page_added == 0:
                     print(
-                        "No new listings found on this page. "
+                        "No new unique listings found. "
                         "Stopping pagination."
                     )
                     break
@@ -279,8 +252,7 @@ def scrape_ebay(
     print()
     print(
         f"Finished scraping. Returning "
-        f"{len(results)} NEW listings."
+        f"{len(results)} unique listings."
     )
 
     return results
-
