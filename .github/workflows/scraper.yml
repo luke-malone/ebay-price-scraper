@@ -3,10 +3,15 @@ name: eBay scraper
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 */2 * * *"
+    - cron: "17 */2 * * *"
 
 permissions:
   contents: read
+  id-token: write
+
+concurrency:
+  group: ebay-scraper
+  cancel-in-progress: false
 
 jobs:
   scrape:
@@ -25,21 +30,41 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
-          python -m pip install python-dotenv
+          python -m pip install python-dotenv google-cloud-storage
 
-      - name: Install Playwright Chromium
+      - name: Install Playwright
         run: python -m playwright install --with-deps chromium
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ebay-scraper@project-4127aa68-53ef-44e4-83f.iam.gserviceaccount.com
 
       - name: Run scraper
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: xvfb-run -a python main.py
 
-      - name: Upload results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: ebay-results-${{ github.run_number }}
-          path: output/
-          if-no-files-found: ignore
-          retention-days: 7
+      - name: Upload dataset to Cloud Storage
+        run: |
+          TIMESTAMP=$(date -u +"%Y-%m-%dT%H-%M-%SZ")
+          gcloud storage cp \
+            output/classified.json \
+            gs://server-413715-iphone-scraper/data/${TIMESTAMP}/classified.json
+
+          gcloud storage cp \
+            output/price_eligible.json \
+            gs://server-413715-iphone-scraper/data/${TIMESTAMP}/price_eligible.json
+
+          gcloud storage cp \
+            output/price_ineligible.json \
+            gs://server-413715-iphone-scraper/data/${TIMESTAMP}/price_ineligible.json
+
+          gcloud storage cp \
+            output/python_handled.json \
+            gs://server-413715-iphone-scraper/data/${TIMESTAMP}/python_handled.json
+
+          gcloud storage cp \
+            output/gpt_handled.json \
+            gs://server-413715-iphone-scraper/data/${TIMESTAMP}/gpt_handled.json
