@@ -1,11 +1,12 @@
+```yaml
 name: eBay scraper
 
 on:
   workflow_dispatch:
 
- schedule:
-  - cron: "35 * * * *"
-    timezone: "Europe/London"
+  schedule:
+    - cron: "35 * * * *"
+      timezone: "Europe/London"
 
 permissions:
   contents: read
@@ -50,7 +51,7 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           HEADLESS: "false"
         run: |
-          python main.py
+          xvfb-run -a python main.py
 
       - name: Verify scraper outputs
         run: |
@@ -90,3 +91,4 @@ jobs:
           path: output/
           if-no-files-found: ignore
           retention-days: 7
+```
