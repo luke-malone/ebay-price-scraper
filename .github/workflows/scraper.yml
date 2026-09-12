@@ -1,4 +1,4 @@
-```yaml
+
 name: eBay scraper
 
 on:
@@ -91,4 +91,4 @@ jobs:
           path: output/
           if-no-files-found: ignore
           retention-days: 7
-```
+
