@@ -3,9 +3,9 @@ name: eBay scraper
 on:
   workflow_dispatch:
 
-  schedule
-    - cron: "35 * * * *"
-      timezone: "Europe/London"
+schedule:
+  - cron: "35 * * * *"
+    timezone: "Europe/London"
 
 permissions:
   contents: read
