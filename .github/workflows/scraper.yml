@@ -3,7 +3,7 @@ name: eBay scraper
 on:
   workflow_dispatch:
 
-  schedule:
+  schedule
     - cron: "35 * * * *"
       timezone: "Europe/London"
 
@@ -48,7 +48,7 @@ jobs:
       - name: Run scraper
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          HEADLESS: "true"
+          HEADLESS: "false"
         run: |
           python main.py
 
